@@ -1,0 +1,73 @@
+<#
+.SYNOPSIS
+    Securely rotates the KRBTGT account password (TWICE) to invalidate Golden Tickets.
+
+.DESCRIPTION
+    This script resets the KRBTGT password two times with a replication delay
+    in between. Passwords are randomly generated and never displayed or logged.
+
+.NOTES
+    Author: Nick Hodges (example header)
+    Requires: Domain Admin
+    Run from: Domain Controller
+#>
+
+# =========================
+# CONFIG
+# =========================
+$ReplicationWaitMinutes = 15   # Adjust based on AD size
+$KrbtgtAccount          = "krbtgt"
+
+# =========================
+# PRECHECKS
+# =========================
+if (-not ([Security.Principal.WindowsPrincipal]
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "ERROR: Must be run as Administrator / Domain Admin." -ForegroundColor Red
+    exit 1
+}
+
+Import-Module ActiveDirectory -ErrorAction Stop
+
+Write-Host "=== KRBTGT PASSWORD ROTATION (DOUBLE RESET) ===" -ForegroundColor Cyan
+
+# =========================
+# PASSWORD GENERATOR
+# =========================
+function New-RandomPassword {
+    param([int]$Length = 32)
+
+    $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{}<>?'
+    -join (1..$Length | ForEach-Object { $chars | Get-Random -Count 1 })
+}
+
+# =========================
+# RESET FUNCTION
+# =========================
+function Reset-KrbtgtPassword {
+    Write-Host "Resetting KRBTGT password..." -ForegroundColor Yellow
+
+    $securePassword = (New-RandomPassword) | ConvertTo-SecureString -AsPlainText -Force
+    Set-ADAccountPassword -Identity $KrbtgtAccount -NewPassword $securePassword -Reset
+
+    Write-Host "KRBTGT password reset complete." -ForegroundColor Green
+}
+
+# =========================
+# EXECUTION
+# =========================
+Write-Host "`n[1/2] FIRST RESET"
+Reset-KrbtgtPassword
+
+Write-Host "`nWaiting $ReplicationWaitMinutes minutes for replication..." -ForegroundColor Cyan
+Start-Sleep -Seconds ($ReplicationWaitMinutes * 60)
+
+Write-Host "`n[2/2] SECOND RESET"
+Reset-KrbtgtPassword
+
+Write-Host "`nWaiting $ReplicationWaitMinutes minutes for replication..." -ForegroundColor Cyan
+Start-Sleep -Seconds ($ReplicationWaitMinutes * 60)
+
+Write-Host "`nSUCCESS: KRBTGT password rotated TWICE." -ForegroundColor Green
+Write-Host "All Golden Tickets signed with old keys are now invalid." -ForegroundColor Green
