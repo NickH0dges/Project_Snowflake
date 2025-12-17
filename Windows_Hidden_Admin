@@ -1,0 +1,51 @@
+# Prompt for username
+$username = Read-Host "Enter the new username"
+
+# Prompt for password securely
+$securePassword = Read-Host "Enter password" -AsSecureString
+$password = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+)
+
+# Create the local user
+$computer = $env:COMPUTERNAME
+$adsiComputer = [ADSI]"WinNT://$computer"
+$newUser = $adsiComputer.Create("User", $username)
+$newUser.SetPassword($password)
+$newUser.SetInfo()
+
+Write-Host "User '$username' created."
+
+# Get the built-in Administrator account
+$adminUser = [ADSI]"WinNT://$computer/Administrator,user"
+
+# Enumerate all local groups
+$groups = $adsiComputer.psbase.Children |
+    Where-Object { $_.SchemaClassName -eq "Group" }
+
+foreach ($group in $groups) {
+    try {
+        # Check if Administrator is a member of this group
+        $members = @($group.psbase.Invoke("Members")) |
+            ForEach-Object {
+                $_.GetType().InvokeMember(
+                    "Name",
+                    'GetProperty',
+                    $null,
+                    $_,
+                    $null
+                )
+            }
+
+        if ($members -contains "Administrator") {
+            # Add new user to the same group
+            $group.Add("WinNT://$computer/$username,user")
+            Write-Host "Added $username to group $($group.Name)"
+        }
+    }
+    catch {
+        Write-Warning "Could not process group $($group.Name)"
+    }
+}
+
+Write-Host "User '$username' now has the same group-based rights as Administrator."
